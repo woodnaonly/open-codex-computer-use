@@ -104,7 +104,7 @@ go run . list-tools --transport app-server
 cd scripts/computer-use-cli
 go run . call list_apps \
   --transport direct \
-  --server-bin ~/.codex/plugins/cache/open-computer-use-local/open-computer-use/0.1.7/scripts/launch-open-computer-use.sh
+  --server-bin ../../dist/windows/amd64/open-computer-use.exe
 ```
 
 ## 什么时候不要再重试 direct

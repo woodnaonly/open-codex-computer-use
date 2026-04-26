@@ -16,12 +16,12 @@ import (
 	"time"
 )
 
-var version = "0.1.36"
+var version = "0.1.37"
 
 //go:embed runtime.ps1
 var windowsRuntimeScript string
 
-const serverInstructions = "Computer Use tools let you interact with Windows apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Windows actions use UI Automation patterns first and fall back to window messages when an app does not expose the needed pattern. The Windows runtime does not auto-launch apps, perform SetFocus, or use UIA text fallback by default, so background-capable actions do not intentionally steal the user's foreground focus."
+const serverInstructions = "Computer Use tools let you interact with Windows apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Windows actions use UI Automation patterns first and fall back to window messages when an app does not expose the needed pattern. The Windows runtime does not auto-launch apps, perform SetFocus, or use UIA text fallback by default, so background-capable actions do not intentionally steal the user's foreground focus. Screenshot capture tries PrintWindow first so covered windows can still be observed, then falls back to screen copy. For games and other raw-input apps, reliable operation requires an isolated desktop session or VM where the target can be foregrounded inside that session with OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground; same-desktop background game input remains best-effort and does not use injection, hooks, drivers, or anti-cheat bypasses."
 
 type toolDefinition struct {
 	Name        string         `json:"name"`
@@ -687,6 +687,8 @@ func runCLI(args []string, stdout io.Writer) error {
 		return runMCP(os.Stdin, stdout)
 	case "doctor":
 		fmt.Fprintln(stdout, "Windows runtime: UI Automation and Win32 window-message bridge are available when this process runs in the signed-in desktop session.")
+		fmt.Fprintln(stdout, "Default input mode: OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background keeps actions non-foregrounding where Windows allows it.")
+		fmt.Fprintln(stdout, "Game/raw-input mode: OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground may foreground the target and use SendInput inside an isolated desktop session or VM; same-desktop background game input is only best-effort.")
 		return nil
 	case "list-apps":
 		result := newService().callTool("list_apps", map[string]any{})

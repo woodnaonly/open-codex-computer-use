@@ -34,6 +34,7 @@
   - 第一版以 Go 生成 `.exe` 为交付边界，但 UIA 操作通过嵌入式 PowerShell bridge 调 Windows 内置 .NET UI Automation API。
   - Win32 window message fallback 能减少真实鼠标抢占，但不同 GUI toolkit 对后台消息支持不一致。
   - Windows 没有一套对任意 app 都等价于 macOS AX 的后台键鼠模型；当前策略是 UIA pattern 优先、window message best-effort，并把启动 app / `SetFocus` / UIA text fallback 这类前台抢占路径做成显式 opt-in。
+  - 对游戏、DirectX 或 raw-input 应用，可靠路径是隔离桌面 session / VM：目标窗口在该 session 内保持前台，用户主桌面不被抢；同一桌面内不做注入、hook、驱动或反作弊绕过。
 
 ## 风险
 
@@ -61,6 +62,8 @@
 - 手工检查：
   - 在已登录 Windows 桌面里打开 Notepad，运行 `get_app_state -> set_value/type_text/press_key/click` sequence。
   - 确认 action 后返回最新 state text 和截图。
+  - 用其他窗口遮挡 Notepad，确认 `get_app_state` 优先通过 `PrintWindow` 返回目标窗口内容，而不是遮挡窗口内容。
+  - 在隔离桌面 session / VM 内设置 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground`，确认游戏或 raw-input 应用只在隔离 session 内被前台化。
 - 观测检查：
   - 确认 SSH/service 环境下的空窗口列表被明确呈现，不把它误写成 UIA 逻辑失败。
 
@@ -79,9 +82,11 @@
 - [x] 通过交互式 Windows scheduled task 验证新 `type_text` 路径：`get_app_state -> type_text -> get_app_state` 三步均 `isError=false`，Notepad 文本包含 `bgmsg-*` marker，前台窗口调用前后均为 Codex。
 - [ ] 在交互式 Windows 桌面 session 补 Notepad / Edge 等真实 UI action smoke。
 - [ ] 增加 Windows fixture 和可重复 smoke runner。
-- [ ] 评估用 `PrintWindow` / Windows Graphics Capture 补一条不依赖窗口可见性的 background screenshot 路径。
+- [x] 用 `PrintWindow(PW_RENDERFULLCONTENT)` 补一条不依赖窗口前台/无遮挡的 background screenshot 路径，失败或明显空图时回退 `CopyFromScreen`。
 - [ ] 为必须依赖前台输入的 app/toolkit 场景补更明确的 capability/error，避免静默退到抢焦点行为。
 - [x] 将 Windows artifact 接入 npm release packaging，作为既有 npm root/alias packages 的 bundled artifacts 分发。
+- [x] 新增 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background|session-foreground`，默认保持非抢占 background 行为；`session-foreground` 仅用于隔离 session / VM 内的游戏/raw-input 兼容路径。
+- [x] 将 Windows 后台截图 / 隔离 session 输入 / 跨平台 Codex plugin launcher 收口到 `0.1.37` 版本源，并部署到本机 Codex plugin cache。
 - [ ] 补 Windows signing / installer 方案。
 - [ ] 评估把 PowerShell bridge 替换为原生 Go COM/UIA 的收益和风险。
 
@@ -97,3 +102,6 @@
 - 2026-04-22：Notepad 实测反馈 `type_text` 的 UIA `ValuePattern.SetValue` 会把窗口带到前台；默认改为 child HWND `EM_REPLACESEL` 后台消息路径，旧 UIA fallback 需要 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1`。
 - 2026-04-22：Windows 交互式 scheduled task 验证显示新 `type_text` 能写入 Notepad 且不会把前台从 Codex 切到 Notepad；Notepad 文本控件 UIA class 为 `RichEditD2DPT`，有 child native handle，可接收 `EM_REPLACESEL`。
 - 2026-04-23：Windows release artifact 接入 npm package bundled artifacts，不新增系统 installer/signing；root `open-computer-use` package 通过 launcher 按 `win32-arm64` / `win32-x64` 自动选择 `.exe`。
+- 2026-04-26：Windows screenshot 先走 `PrintWindow(PW_RENDERFULLCONTENT)`，用于目标窗口被遮挡但未最小化的后台观察；失败或明显空图再回退屏幕拷贝。
+- 2026-04-26：游戏/raw-input 兼容不承诺同一桌面后台输入。新增 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground`，只在隔离桌面 session / VM 内允许前台化目标并使用 `SendInput`；默认仍是 `background` 非抢占模式。
+- 2026-04-26：本轮 Windows 后台兼容改动使用 `0.1.37` 作为新的版本源，避免本机 Codex plugin cache 继续复用 `0.1.36` 目录。

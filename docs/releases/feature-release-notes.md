@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-26 | Windows 后台控制与本地 Codex 部署 | Windows 用户可以在目标窗口被遮挡时继续截图观察，并把游戏/raw-input 场景放到隔离 session / VM 里运行，避免抢占主桌面。 | 发布 `0.1.37`，Windows runtime 增加 `PrintWindow` 截图 fallback、`OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background|session-foreground` 输入模式和跨平台 Codex plugin launcher；本地 Codex plugin 部署不再依赖 `.sh`。 |
 | 2026-04-23 | Linux Codex MCP 安装 | Linux 用户现在可以按 `npm i -g open-computer-use`、`open-computer-use install-codex-mcp`、`codex` 的路径接入，不再手动编辑桌面 session 的 D-Bus / display 环境变量。 | 发布 `0.1.36`，Linux runtime 在启动 AT-SPI bridge 前会动态发现当前用户的 `/run/user/<uid>` session bus 和 display / Wayland 环境，Codex 配置继续保持 `open-computer-use mcp`。 |
 | 2026-04-23 | 三端 npm 安装 | `npm i -g open-computer-use` 现在会根据当前 `os-arch` 调用对应的 macOS `.app`、Linux binary 或 Windows `.exe`，不再把 npm 分发锁死在 macOS。 | 发布 `0.1.35`，三个既有 npm 包都会内置 macOS、Linux、Windows runtime，由跨平台 Node launcher 选择 native runtime；`0.1.34` 的新增 platform package 方案因 npm 包名权限失败后被 supersede。 |
 | 2026-04-22 | Gemini / opencode MCP 安装 | Gemini CLI 和 opencode 用户现在也能像 Claude Code / Codex 一样用仓库内置命令完成 `open-computer-use` 的 MCP 接入，不需要再手动查各自配置格式。 | 发布 `0.1.33`，新增 `install-gemini-mcp` 和 `install-opencode-mcp`，将 npm launcher、README 与共享配置 helper 一并补齐，并让 Gemini 默认 project-scope 配置不会污染仓库 git 状态。 |

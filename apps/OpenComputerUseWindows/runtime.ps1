@@ -28,6 +28,39 @@ public static class OCUWin32 {
         public int Y;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUT {
+        public UInt32 type;
+        public INPUTUNION u;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct INPUTUNION {
+        [FieldOffset(0)]
+        public MOUSEINPUT mi;
+        [FieldOffset(0)]
+        public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT {
+        public Int32 dx;
+        public Int32 dy;
+        public UInt32 mouseData;
+        public UInt32 dwFlags;
+        public UInt32 time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT {
+        public UInt16 wVk;
+        public UInt16 wScan;
+        public UInt32 dwFlags;
+        public UInt32 time;
+        public IntPtr dwExtraInfo;
+    }
+
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
@@ -42,9 +75,42 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, UInt32 nFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, Int32 nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(Int32 X, Int32 Y);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern UInt32 SendInput(UInt32 nInputs, INPUT[] pInputs, Int32 cbSize);
+
+    public static Int32 InputSize() {
+        return Marshal.SizeOf(typeof(INPUT));
+    }
 }
 "@
 
+$PW_RENDERFULLCONTENT = 0x00000002
+$SW_RESTORE = 9
+$INPUT_MOUSE = 0
+$INPUT_KEYBOARD = 1
+$MOUSEEVENTF_LEFTDOWN = 0x0002
+$MOUSEEVENTF_LEFTUP = 0x0004
+$MOUSEEVENTF_RIGHTDOWN = 0x0008
+$MOUSEEVENTF_RIGHTUP = 0x0010
+$MOUSEEVENTF_MIDDLEDOWN = 0x0020
+$MOUSEEVENTF_MIDDLEUP = 0x0040
+$MOUSEEVENTF_WHEEL = 0x0800
+$MOUSEEVENTF_HWHEEL = 0x1000
+$KEYEVENTF_KEYUP = 0x0002
+$KEYEVENTF_UNICODE = 0x0004
 $WM_SETTEXT = 0x000C
 $WM_MOUSEMOVE = 0x0200
 $WM_LBUTTONDOWN = 0x0201
@@ -70,6 +136,22 @@ function Test-EnvFlagEnabled([string]$name) {
     return @("1", "true", "yes", "on") -contains $normalized
 }
 
+function Get-WindowsInputMode {
+    $value = [Environment]::GetEnvironmentVariable("OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE")
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return "background"
+    }
+    $normalized = $value.Trim().ToLowerInvariant()
+    if ($normalized -eq "background" -or $normalized -eq "session-foreground") {
+        return $normalized
+    }
+    throw "Invalid OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE '$value'. Use 'background' or 'session-foreground'."
+}
+
+function Test-SessionForegroundInputMode {
+    return (Get-WindowsInputMode) -eq "session-foreground"
+}
+
 function New-Frame($x, $y, $width, $height) {
     if ($width -lt 0 -or $height -lt 0) {
         return $null
@@ -90,6 +172,13 @@ function ConvertTo-LParam([int]$x, [int]$y) {
 function ConvertTo-WheelWParam([int]$delta) {
     $packed = (($delta -band 0xffff) -shl 16)
     [IntPtr]$packed
+}
+
+function ConvertTo-UnsignedInt32([int]$value) {
+    if ($value -lt 0) {
+        return [UInt32]([Int64]$value + 0x100000000)
+    }
+    return [UInt32]$value
 }
 
 function Get-WindowRectFrame([IntPtr]$hwnd) {
@@ -277,6 +366,142 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
     [array]::Reverse($modifiers)
     foreach ($modifier in $modifiers) {
         [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+    }
+}
+
+function New-MouseInput([UInt32]$flags, [UInt32]$mouseData) {
+    $input = New-Object OCUWin32+INPUT
+    $input.type = [UInt32]$INPUT_MOUSE
+    $mouse = New-Object OCUWin32+MOUSEINPUT
+    $mouse.dwFlags = $flags
+    $mouse.mouseData = $mouseData
+    $union = New-Object OCUWin32+INPUTUNION
+    $union.mi = $mouse
+    $input.u = $union
+    return $input
+}
+
+function New-KeyboardInput([UInt16]$vk, [UInt16]$scan, [UInt32]$flags) {
+    $input = New-Object OCUWin32+INPUT
+    $input.type = [UInt32]$INPUT_KEYBOARD
+    $keyboard = New-Object OCUWin32+KEYBDINPUT
+    $keyboard.wVk = $vk
+    $keyboard.wScan = $scan
+    $keyboard.dwFlags = $flags
+    $union = New-Object OCUWin32+INPUTUNION
+    $union.ki = $keyboard
+    $input.u = $union
+    return $input
+}
+
+function Send-InputBatch($inputs) {
+    $array = [OCUWin32+INPUT[]]@($inputs)
+    if ($array.Length -eq 0) {
+        return
+    }
+    $sent = [OCUWin32]::SendInput([UInt32]$array.Length, $array, [OCUWin32]::InputSize())
+    if ($sent -ne $array.Length) {
+        throw "SendInput delivered $sent of $($array.Length) events"
+    }
+}
+
+function Set-TargetForeground([IntPtr]$hwnd) {
+    if ($hwnd -eq [IntPtr]::Zero) {
+        throw "Cannot use session-foreground input without a target window handle"
+    }
+    [void][OCUWin32]::ShowWindow($hwnd, $SW_RESTORE)
+    [void][OCUWin32]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 80
+}
+
+function Send-ForegroundMouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
+    Set-TargetForeground $hwnd
+    [void][OCUWin32]::SetCursorPos($screenX, $screenY)
+
+    $down = [UInt32]$MOUSEEVENTF_LEFTDOWN
+    $up = [UInt32]$MOUSEEVENTF_LEFTUP
+    if ($button -eq "right") {
+        $down = [UInt32]$MOUSEEVENTF_RIGHTDOWN
+        $up = [UInt32]$MOUSEEVENTF_RIGHTUP
+    } elseif ($button -eq "middle") {
+        $down = [UInt32]$MOUSEEVENTF_MIDDLEDOWN
+        $up = [UInt32]$MOUSEEVENTF_MIDDLEUP
+    }
+
+    $repeat = [math]::Max(1, $count)
+    for ($i = 0; $i -lt $repeat; $i++) {
+        Send-InputBatch @((New-MouseInput $down 0), (New-MouseInput $up 0))
+        Start-Sleep -Milliseconds 50
+    }
+}
+
+function Send-ForegroundDrag([IntPtr]$hwnd, [int]$fromX, [int]$fromY, [int]$toX, [int]$toY) {
+    Set-TargetForeground $hwnd
+    [void][OCUWin32]::SetCursorPos($fromX, $fromY)
+    Send-InputBatch @((New-MouseInput ([UInt32]$MOUSEEVENTF_LEFTDOWN) 0))
+    $steps = 12
+    for ($i = 1; $i -le $steps; $i++) {
+        $x = [int][math]::Round($fromX + (($toX - $fromX) * $i / $steps))
+        $y = [int][math]::Round($fromY + (($toY - $fromY) * $i / $steps))
+        [void][OCUWin32]::SetCursorPos($x, $y)
+        Start-Sleep -Milliseconds 20
+    }
+    Send-InputBatch @((New-MouseInput ([UInt32]$MOUSEEVENTF_LEFTUP) 0))
+}
+
+function Send-ForegroundScroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direction, [double]$pages) {
+    Set-TargetForeground $hwnd
+    [void][OCUWin32]::SetCursorPos($screenX, $screenY)
+    $delta = [int][math]::Round(120 * $pages)
+    $flag = [UInt32]$MOUSEEVENTF_WHEEL
+    if ($direction -eq "down" -or $direction -eq "right") {
+        $delta = -1 * $delta
+    }
+    if ($direction -eq "left" -or $direction -eq "right") {
+        $flag = [UInt32]$MOUSEEVENTF_HWHEEL
+    }
+    Send-InputBatch @((New-MouseInput $flag (ConvertTo-UnsignedInt32 $delta)))
+}
+
+function Send-ForegroundKey([IntPtr]$hwnd, [string]$key) {
+    Set-TargetForeground $hwnd
+    $parts = $key -split "\+"
+    $main = $parts[$parts.Length - 1]
+    $modifiers = @()
+    for ($i = 0; $i -lt $parts.Length - 1; $i++) {
+        switch ($parts[$i].ToLowerInvariant()) {
+            "ctrl" { $modifiers += 0x11 }
+            "control" { $modifiers += 0x11 }
+            "shift" { $modifiers += 0x10 }
+            "alt" { $modifiers += 0x12 }
+            "super" { $modifiers += 0x5B }
+            "win" { $modifiers += 0x5B }
+            "cmd" { $modifiers += 0x5B }
+        }
+    }
+    $inputs = New-Object System.Collections.Generic.List[object]
+    foreach ($modifier in $modifiers) {
+        $inputs.Add((New-KeyboardInput ([UInt16]$modifier) 0 0))
+    }
+    $vk = Get-VirtualKey $main
+    $inputs.Add((New-KeyboardInput ([UInt16]$vk) 0 0))
+    $inputs.Add((New-KeyboardInput ([UInt16]$vk) 0 ([UInt32]$KEYEVENTF_KEYUP)))
+    [array]::Reverse($modifiers)
+    foreach ($modifier in $modifiers) {
+        $inputs.Add((New-KeyboardInput ([UInt16]$modifier) 0 ([UInt32]$KEYEVENTF_KEYUP)))
+    }
+    Send-InputBatch ($inputs.ToArray())
+}
+
+function Send-ForegroundText([IntPtr]$hwnd, [string]$text) {
+    Set-TargetForeground $hwnd
+    foreach ($char in $text.ToCharArray()) {
+        $scan = [UInt16][int][char]$char
+        Send-InputBatch @(
+            (New-KeyboardInput 0 $scan ([UInt32]$KEYEVENTF_UNICODE)),
+            (New-KeyboardInput 0 $scan ([UInt32]($KEYEVENTF_UNICODE -bor $KEYEVENTF_KEYUP)))
+        )
+        Start-Sleep -Milliseconds 8
     }
 }
 
@@ -520,7 +745,72 @@ function Render-Tree($element, $windowBounds) {
     }
 }
 
-function Capture-WindowPngBase64($bounds) {
+function Convert-BitmapToPngBase64($bitmap) {
+    $stream = New-Object System.IO.MemoryStream
+    try {
+        $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+        return [Convert]::ToBase64String($stream.ToArray())
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Test-BitmapMostlyBlank($bitmap) {
+    if ($null -eq $bitmap -or $bitmap.Width -le 0 -or $bitmap.Height -le 0) {
+        return $true
+    }
+    $samples = 0
+    $darkOrTransparent = 0
+    $maxX = [math]::Max(1, $bitmap.Width - 1)
+    $maxY = [math]::Max(1, $bitmap.Height - 1)
+    for ($xStep = 0; $xStep -lt 6; $xStep++) {
+        for ($yStep = 0; $yStep -lt 6; $yStep++) {
+            $x = [int][math]::Round($maxX * $xStep / 5)
+            $y = [int][math]::Round($maxY * $yStep / 5)
+            $pixel = $bitmap.GetPixel($x, $y)
+            $samples++
+            if ($pixel.A -eq 0 -or ($pixel.R -le 5 -and $pixel.G -le 5 -and $pixel.B -le 5)) {
+                $darkOrTransparent++
+            }
+        }
+    }
+    return $samples -gt 0 -and ($darkOrTransparent / $samples) -gt 0.95
+}
+
+function Capture-WindowWithPrintWindowPngBase64([IntPtr]$hwnd, $bounds) {
+    if ($hwnd -eq [IntPtr]::Zero -or $null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0) {
+        return $null
+    }
+    $bitmap = $null
+    $graphics = $null
+    $hdc = [IntPtr]::Zero
+    try {
+        $bitmap = New-Object System.Drawing.Bitmap ([int][math]::Round($bounds.width)), ([int][math]::Round($bounds.height))
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $hdc = $graphics.GetHdc()
+        $printed = [OCUWin32]::PrintWindow($hwnd, $hdc, [UInt32]$PW_RENDERFULLCONTENT)
+        $graphics.ReleaseHdc($hdc)
+        $hdc = [IntPtr]::Zero
+        if (-not $printed -or (Test-BitmapMostlyBlank $bitmap)) {
+            return $null
+        }
+        return Convert-BitmapToPngBase64 $bitmap
+    } catch {
+        return $null
+    } finally {
+        if ($null -ne $graphics -and $hdc -ne [IntPtr]::Zero) {
+            try { $graphics.ReleaseHdc($hdc) } catch {}
+        }
+        if ($null -ne $graphics) {
+            $graphics.Dispose()
+        }
+        if ($null -ne $bitmap) {
+            $bitmap.Dispose()
+        }
+    }
+}
+
+function Capture-WindowWithScreenCopyPngBase64($bounds) {
     if ($null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0) {
         return $null
     }
@@ -528,16 +818,21 @@ function Capture-WindowPngBase64($bounds) {
         $bitmap = New-Object System.Drawing.Bitmap ([int][math]::Round($bounds.width)), ([int][math]::Round($bounds.height))
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         $graphics.CopyFromScreen([int][math]::Round($bounds.x), [int][math]::Round($bounds.y), 0, 0, $bitmap.Size)
-        $stream = New-Object System.IO.MemoryStream
-        $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+        $encoded = Convert-BitmapToPngBase64 $bitmap
         $graphics.Dispose()
         $bitmap.Dispose()
-        $bytes = $stream.ToArray()
-        $stream.Dispose()
-        return [Convert]::ToBase64String($bytes)
+        return $encoded
     } catch {
         return $null
     }
+}
+
+function Capture-WindowPngBase64([IntPtr]$hwnd, $bounds) {
+    $printed = Capture-WindowWithPrintWindowPngBase64 $hwnd $bounds
+    if (-not [string]::IsNullOrWhiteSpace($printed)) {
+        return $printed
+    }
+    return Capture-WindowWithScreenCopyPngBase64 $bounds
 }
 
 function Get-FocusedSummary($processId) {
@@ -585,7 +880,7 @@ function Build-Snapshot([string]$query) {
         }
         windowTitle = $process.MainWindowTitle
         windowBounds = $bounds
-        screenshotPngBase64 = Capture-WindowPngBase64 $bounds
+        screenshotPngBase64 = Capture-WindowPngBase64 ([IntPtr]$process.MainWindowHandle) $bounds
         treeLines = @($rendered.lines)
         focusedSummary = Get-FocusedSummary $process.Id
         selectedText = Get-SelectedText $process.Id
@@ -863,19 +1158,24 @@ try {
 
         switch ($operation.tool) {
             "click" {
+                if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
+                    $point = Get-ScreenPoint $operation.element.frame $windowBounds
+                } else {
+                    $point = [pscustomobject]@{
+                        x = [int][math]::Round($windowBounds.x + [double]$operation.x)
+                        y = [int][math]::Round($windowBounds.y + [double]$operation.y)
+                    }
+                }
+                if (Test-SessionForegroundInputMode) {
+                    Send-ForegroundMouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                    break
+                }
+
                 $handled = $false
                 if ($null -ne $element -and $operation.mouse_button -ne "right" -and $operation.mouse_button -ne "middle") {
                     $handled = Invoke-PreferredClick $element
                 }
                 if (-not $handled) {
-                    if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
-                        $point = Get-ScreenPoint $operation.element.frame $windowBounds
-                    } else {
-                        $point = [pscustomobject]@{
-                            x = [int][math]::Round($windowBounds.x + [double]$operation.x)
-                            y = [int][math]::Round($windowBounds.y + [double]$operation.y)
-                        }
-                    }
                     Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
                 }
             }
@@ -884,25 +1184,44 @@ try {
                 Invoke-SecondaryAction $element $operation.action
             }
             "scroll" {
+                $point = Get-ScreenPoint $operation.element.frame $windowBounds
+                if (Test-SessionForegroundInputMode) {
+                    Send-ForegroundScroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)
+                    break
+                }
+
                 $handled = $false
                 if ($null -ne $element) {
                     $handled = Invoke-Scroll $element $operation.direction ([double]$operation.pages)
                 }
                 if (-not $handled) {
-                    $point = Get-ScreenPoint $operation.element.frame $windowBounds
                     Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages)
                 }
             }
             "drag" {
-                Send-Drag $hwnd ([int][math]::Round($windowBounds.x + [double]$operation.from_x)) ([int][math]::Round($windowBounds.y + [double]$operation.from_y)) ([int][math]::Round($windowBounds.x + [double]$operation.to_x)) ([int][math]::Round($windowBounds.y + [double]$operation.to_y))
+                $fromX = [int][math]::Round($windowBounds.x + [double]$operation.from_x)
+                $fromY = [int][math]::Round($windowBounds.y + [double]$operation.from_y)
+                $toX = [int][math]::Round($windowBounds.x + [double]$operation.to_x)
+                $toY = [int][math]::Round($windowBounds.y + [double]$operation.to_y)
+                if (Test-SessionForegroundInputMode) {
+                    Send-ForegroundDrag $hwnd $fromX $fromY $toX $toY
+                } else {
+                    Send-Drag $hwnd $fromX $fromY $toX $toY
+                }
             }
             "type_text" {
-                if (-not (Invoke-TypeText $process $operation.text)) {
+                if (Test-SessionForegroundInputMode) {
+                    Send-ForegroundText $hwnd $operation.text
+                } elseif (-not (Invoke-TypeText $process $operation.text)) {
                     Send-Text $hwnd $operation.text
                 }
             }
             "press_key" {
-                Send-Key $hwnd $operation.key
+                if (Test-SessionForegroundInputMode) {
+                    Send-ForegroundKey $hwnd $operation.key
+                } else {
+                    Send-Key $hwnd $operation.key
+                }
             }
             "set_value" {
                 if ($null -eq $element) { throw "unknown element_index '$($operation.element.index)'" }

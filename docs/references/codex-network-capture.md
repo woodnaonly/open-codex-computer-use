@@ -273,7 +273,7 @@ printf '%s\n%s\n%s\n' \
 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
 '{"jsonrpc":"2.0","id":2,"method":"notifications/initialized","params":{}}' \
 '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_apps","arguments":{}}}' \
-| ./plugins/open-computer-use/scripts/launch-open-computer-use.sh
+| node ./plugins/open-computer-use/scripts/launch-open-computer-use.mjs
 ```
 
 如果 direct JSON-RPC 能正常返回，而 Codex 会话里仍然显示 tool 被取消或根本没有继续执行，优先怀疑：
@@ -318,7 +318,7 @@ printf '%s\n%s\n%s\n' \
 1. `-c 'plugins."...".enabled=false'` 这条覆写是生效的。
 2. 只保留官方 `computer-use` 时，`computer-use/list_apps` 可以正常完成。
 3. 只保留 `open-computer-use` 时，`open-computer-use/list_apps` 仍然直接返回 `user cancelled MCP tool call`。
-4. 同时，直接对 `./plugins/open-computer-use/scripts/launch-open-computer-use.sh` 发 JSON-RPC 的 `tools/list` / `tools/call list_apps` 是正常的。
+4. 同时，直接对 `node ./plugins/open-computer-use/scripts/launch-open-computer-use.mjs` 发 JSON-RPC 的 `tools/list` / `tools/call list_apps` 是正常的。
 
 这说明在当前环境里：
 

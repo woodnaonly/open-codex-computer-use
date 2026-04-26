@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -86,5 +88,76 @@ func TestWindowsRuntimeForegroundActionsRequireOptIn(t *testing.T) {
 	}
 	if !strings.Contains(serverInstructions, "does not auto-launch apps, perform SetFocus, or use UIA text fallback by default") {
 		t.Fatal("MCP instructions must document the Windows background-focus policy")
+	}
+}
+
+func TestWindowsRuntimeBackgroundScreenshotUsesPrintWindowFallback(t *testing.T) {
+	if !strings.Contains(windowsRuntimeScript, "PrintWindow") {
+		t.Fatal("Windows screenshot capture should try PrintWindow before screen copy")
+	}
+	if !strings.Contains(windowsRuntimeScript, "PW_RENDERFULLCONTENT") {
+		t.Fatal("Windows PrintWindow capture should request full window content")
+	}
+	if !strings.Contains(windowsRuntimeScript, "Test-BitmapMostlyBlank") {
+		t.Fatal("Windows screenshot capture should detect blank PrintWindow results before falling back")
+	}
+}
+
+func TestWindowsRuntimeSessionForegroundModeIsExplicit(t *testing.T) {
+	if !strings.Contains(windowsRuntimeScript, "OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE") {
+		t.Fatal("Windows input mode must be controlled by an explicit environment variable")
+	}
+	if !strings.Contains(windowsRuntimeScript, "session-foreground") {
+		t.Fatal("Windows runtime must expose a session-foreground input mode")
+	}
+	if !strings.Contains(windowsRuntimeScript, "SetForegroundWindow") {
+		t.Fatal("session-foreground mode should be able to foreground the target inside an isolated session")
+	}
+	if !strings.Contains(windowsRuntimeScript, "SendInput") {
+		t.Fatal("session-foreground mode should use SendInput for raw-input compatible actions")
+	}
+	if !strings.Contains(serverInstructions, "isolated desktop session or VM") {
+		t.Fatal("MCP instructions must document the VM/session boundary for game compatibility")
+	}
+}
+
+func TestWindowsRuntimePacksSignedWheelDeltaForSendInput(t *testing.T) {
+	if !strings.Contains(windowsRuntimeScript, "ConvertTo-UnsignedInt32") {
+		t.Fatal("session-foreground wheel input should pack signed wheel deltas without UInt32 cast failures")
+	}
+	if strings.Contains(windowsRuntimeScript, "[UInt32]($delta -band 0xffffffff)") {
+		t.Fatal("PowerShell cannot cast a negative wheel delta directly to UInt32")
+	}
+}
+
+func TestDoctorMentionsWindowsInputModeBoundary(t *testing.T) {
+	var out bytes.Buffer
+	if err := runCLI([]string{"doctor"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background") {
+		t.Fatalf("doctor should document default input mode:\n%s", text)
+	}
+	if !strings.Contains(text, "OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground") {
+		t.Fatalf("doctor should document session-foreground mode:\n%s", text)
+	}
+	if !strings.Contains(text, "isolated desktop session or VM") {
+		t.Fatalf("doctor should document the game compatibility boundary:\n%s", text)
+	}
+}
+
+func TestCodexPluginMCPConfigUsesCrossPlatformLauncher(t *testing.T) {
+	configPath := filepath.FromSlash("../../plugins/open-computer-use/.mcp.json")
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, "launch-open-computer-use.sh") {
+		t.Fatal("Codex plugin MCP config should not require a POSIX shell on Windows")
+	}
+	if !strings.Contains(text, "launch-open-computer-use.mjs") {
+		t.Fatal("Codex plugin MCP config should use the cross-platform Node launcher")
 	}
 }

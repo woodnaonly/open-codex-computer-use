@@ -5,11 +5,14 @@
 - 当前 server 只提供本地 `stdio` MCP，不对外监听 TCP/HTTP 端口。
 - 所有动作都必须显式带 `app` 参数；当前不会在后台自动扫描并控制任意 app。
 - 真实 app 路径依赖宿主进程已经获得 macOS `Accessibility` 与 `Screen Recording` 权限。
+- 实验性 Windows runtime 默认使用 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background`，优先走 UIA pattern / Win32 window message，不主动抢用户当前前台窗口；`OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground` 只适合隔离桌面 session / VM，会在目标 session 内前台化窗口并使用 `SendInput`。
+- Windows 上对游戏、DirectX 或 raw-input 应用不承诺同一桌面里的真正后台输入；可靠路径是隔离 session / VM。项目不引入注入、hook、驱动或反作弊绕过。
 - 实验性 Linux runtime 依赖已登录桌面用户的 AT-SPI2 / D-Bus session；coordinate mouse、drag、keyboard synthesis 只是 best-effort fallback，不应被视为跨 Wayland compositor 的通用后台输入授权。
 
 ## 数据处理
 
 - 普通 app 的 screenshot 默认只在内存中编码成 PNG，并通过 MCP `image` content block 直接回传；默认不长期持久化。
+- Windows runtime 会先尝试 `PrintWindow(PW_RENDERFULLCONTENT)` 捕获被遮挡但未最小化的目标窗口；如果返回失败或明显空图，再回退到屏幕拷贝。截图仍只通过 MCP result 返回，不默认持久化。
 - Linux runtime 的 screenshot 是 best-effort；如果 GNOME Wayland 返回黑图，bridge 会省略 image block，避免把无效截图误当成真实画面。
 - fixture app 的合成状态只写到本地临时 JSON 文件，目的是支撑 deterministic smoke test；当前写入走原子替换，减少测试期间的读写竞争。
 - 当前仓库不引入第三方服务，也不上传截图、AX tree 或输入内容。

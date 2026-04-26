@@ -1,7 +1,10 @@
 {
   "mcpServers": {
     "open-computer-use": {
-      "command": "./scripts/launch-open-computer-use.sh",
+      "command": "node",
+      "args": [
+        "./scripts/launch-open-computer-use.mjs"
+      ],
       "cwd": "."
     }
   }
