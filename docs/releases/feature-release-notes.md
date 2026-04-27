@@ -4,6 +4,8 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-04-26 | Windows 非前台诊断 | Windows 后台控制现在能明确告诉调用方截图来自 `PrintWindow` 还是屏幕拷贝，并报告 action 是否改变了前台窗口，避免把“调用成功”误判成“目标实际吃到输入”。 | 发布 `0.1.39`，`get_app_state` 文本追加 `Screenshot source`，action 结果追加 `Input mode` / `Foreground changed`，并让 background `press_key.duration_ms` 走 `PostMessage` 按住路径。 |
+| 2026-04-26 | Windows 游戏输入 | Windows 游戏试玩时可以让方向键或 WASD 保持按下一段时间，不再只能发极短的按键 tap。 | 发布 `0.1.38`，`press_key` 新增 `duration_ms` 参数，Windows runtime 会在 keydown/keyUp 之间按指定毫秒数保持按键，`session-foreground` 模式下可用于 Godot/游戏窗口的移动输入。 |
 | 2026-04-26 | Windows 后台控制与本地 Codex 部署 | Windows 用户可以在目标窗口被遮挡时继续截图观察，并把游戏/raw-input 场景放到隔离 session / VM 里运行，避免抢占主桌面。 | 发布 `0.1.37`，Windows runtime 增加 `PrintWindow` 截图 fallback、`OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background|session-foreground` 输入模式和跨平台 Codex plugin launcher；本地 Codex plugin 部署不再依赖 `.sh`。 |
 | 2026-04-23 | Linux Codex MCP 安装 | Linux 用户现在可以按 `npm i -g open-computer-use`、`open-computer-use install-codex-mcp`、`codex` 的路径接入，不再手动编辑桌面 session 的 D-Bus / display 环境变量。 | 发布 `0.1.36`，Linux runtime 在启动 AT-SPI bridge 前会动态发现当前用户的 `/run/user/<uid>` session bus 和 display / Wayland 环境，Codex 配置继续保持 `open-computer-use mcp`。 |
 | 2026-04-23 | 三端 npm 安装 | `npm i -g open-computer-use` 现在会根据当前 `os-arch` 调用对应的 macOS `.app`、Linux binary 或 Windows `.exe`，不再把 npm 分发锁死在 macOS。 | 发布 `0.1.35`，三个既有 npm 包都会内置 macOS、Linux、Windows runtime，由跨平台 Node launcher 选择 native runtime；`0.1.34` 的新增 platform package 方案因 npm 包名权限失败后被 supersede。 |

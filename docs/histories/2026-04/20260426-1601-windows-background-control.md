@@ -17,6 +17,8 @@
 - 已把本地构建的 Windows runtime 部署到 Codex plugin cache，并启用 `open-computer-use@open-computer-use-local`。
 - 同步更新直接调试文档，把旧 `.sh` launcher 示例替换为 Windows 可用的 exe 或 Node launcher。
 - 将 release 版本 bump 到 `0.1.37`，并重新部署到本机 Codex 的 `open-computer-use-local/open-computer-use/0.1.37` plugin cache。
+- 根据 Neon Assault 实测反馈补 `press_key.duration_ms`，让 Windows `session-foreground` 输入可以按住按键一段时间，而不是只能发送极短 tap；版本继续 bump 到 `0.1.38` 并部署到本机 Codex plugin cache。
+- 给 Windows background 模式补截图来源和前台变化诊断：`get_app_state` 会标注 `Screenshot source`，action 会标注 `Input mode` 与 `Foreground changed`；版本继续 bump 到 `0.1.39` 并部署到本机 Codex plugin cache。
 
 ## 设计动机
 

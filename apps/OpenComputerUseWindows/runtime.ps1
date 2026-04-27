@@ -88,6 +88,9 @@ public static class OCUWin32 {
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(Int32 X, Int32 Y);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern UInt32 SendInput(UInt32 nInputs, INPUT[] pInputs, Int32 cbSize);
 
@@ -150,6 +153,14 @@ function Get-WindowsInputMode {
 
 function Test-SessionForegroundInputMode {
     return (Get-WindowsInputMode) -eq "session-foreground"
+}
+
+function Get-ForegroundWindowHandle {
+    try {
+        return [OCUWin32]::GetForegroundWindow()
+    } catch {
+        return [IntPtr]::Zero
+    }
 }
 
 function New-Frame($x, $y, $width, $height) {
@@ -341,7 +352,7 @@ function Get-VirtualKey([string]$key) {
     throw "Unsupported key: $key"
 }
 
-function Send-Key([IntPtr]$hwnd, [string]$key) {
+function Send-Key([IntPtr]$hwnd, [string]$key, [int]$durationMs) {
     $parts = $key -split "\+"
     $main = $parts[$parts.Length - 1]
     $modifiers = @()
@@ -361,7 +372,11 @@ function Send-Key([IntPtr]$hwnd, [string]$key) {
     }
     $vk = Get-VirtualKey $main
     [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 25
+    if ($durationMs -gt 0) {
+        Start-Sleep -Milliseconds $durationMs
+    } else {
+        Start-Sleep -Milliseconds 25
+    }
     [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
     [array]::Reverse($modifiers)
     foreach ($modifier in $modifiers) {
@@ -463,7 +478,7 @@ function Send-ForegroundScroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [str
     Send-InputBatch @((New-MouseInput $flag (ConvertTo-UnsignedInt32 $delta)))
 }
 
-function Send-ForegroundKey([IntPtr]$hwnd, [string]$key) {
+function Send-ForegroundKey([IntPtr]$hwnd, [string]$key, [int]$durationMs) {
     Set-TargetForeground $hwnd
     $parts = $key -split "\+"
     $main = $parts[$parts.Length - 1]
@@ -485,6 +500,14 @@ function Send-ForegroundKey([IntPtr]$hwnd, [string]$key) {
     }
     $vk = Get-VirtualKey $main
     $inputs.Add((New-KeyboardInput ([UInt16]$vk) 0 0))
+    Send-InputBatch ($inputs.ToArray())
+    if ($durationMs -gt 0) {
+        Start-Sleep -Milliseconds $durationMs
+    } else {
+        Start-Sleep -Milliseconds 25
+    }
+
+    $inputs = New-Object System.Collections.Generic.List[object]
     $inputs.Add((New-KeyboardInput ([UInt16]$vk) 0 ([UInt32]$KEYEVENTF_KEYUP)))
     [array]::Reverse($modifiers)
     foreach ($modifier in $modifiers) {
@@ -777,6 +800,13 @@ function Test-BitmapMostlyBlank($bitmap) {
     return $samples -gt 0 -and ($darkOrTransparent / $samples) -gt 0.95
 }
 
+function New-CaptureResult([string]$data, [string]$source) {
+    [pscustomobject]@{
+        data = $data
+        source = $source
+    }
+}
+
 function Capture-WindowWithPrintWindowPngBase64([IntPtr]$hwnd, $bounds) {
     if ($hwnd -eq [IntPtr]::Zero -or $null -eq $bounds -or $bounds.width -le 0 -or $bounds.height -le 0) {
         return $null
@@ -794,7 +824,7 @@ function Capture-WindowWithPrintWindowPngBase64([IntPtr]$hwnd, $bounds) {
         if (-not $printed -or (Test-BitmapMostlyBlank $bitmap)) {
             return $null
         }
-        return Convert-BitmapToPngBase64 $bitmap
+        return New-CaptureResult (Convert-BitmapToPngBase64 $bitmap) "print_window"
     } catch {
         return $null
     } finally {
@@ -821,7 +851,7 @@ function Capture-WindowWithScreenCopyPngBase64($bounds) {
         $encoded = Convert-BitmapToPngBase64 $bitmap
         $graphics.Dispose()
         $bitmap.Dispose()
-        return $encoded
+        return New-CaptureResult $encoded "screen_copy"
     } catch {
         return $null
     }
@@ -829,10 +859,14 @@ function Capture-WindowWithScreenCopyPngBase64($bounds) {
 
 function Capture-WindowPngBase64([IntPtr]$hwnd, $bounds) {
     $printed = Capture-WindowWithPrintWindowPngBase64 $hwnd $bounds
-    if (-not [string]::IsNullOrWhiteSpace($printed)) {
+    if ($null -ne $printed -and -not [string]::IsNullOrWhiteSpace($printed.data)) {
         return $printed
     }
-    return Capture-WindowWithScreenCopyPngBase64 $bounds
+    $screenCopy = Capture-WindowWithScreenCopyPngBase64 $bounds
+    if ($null -ne $screenCopy -and -not [string]::IsNullOrWhiteSpace($screenCopy.data)) {
+        return $screenCopy
+    }
+    return New-CaptureResult $null "none"
 }
 
 function Get-FocusedSummary($processId) {
@@ -872,6 +906,7 @@ function Build-Snapshot([string]$query) {
     $element = Get-MainElement $process
     $bounds = Get-WindowBounds $process $element
     $rendered = Render-Tree $element $bounds
+    $capture = Capture-WindowPngBase64 ([IntPtr]$process.MainWindowHandle) $bounds
     [pscustomobject]@{
         app = [pscustomobject]@{
             name = $process.ProcessName
@@ -880,7 +915,8 @@ function Build-Snapshot([string]$query) {
         }
         windowTitle = $process.MainWindowTitle
         windowBounds = $bounds
-        screenshotPngBase64 = Capture-WindowPngBase64 ([IntPtr]$process.MainWindowHandle) $bounds
+        screenshotPngBase64 = $capture.data
+        screenshotSource = $capture.source
         treeLines = @($rendered.lines)
         focusedSummary = Get-FocusedSummary $process.Id
         selectedText = Get-SelectedText $process.Id
@@ -1155,6 +1191,8 @@ try {
         $hwnd = [IntPtr]$process.MainWindowHandle
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
+        $inputMode = Get-WindowsInputMode
+        $foregroundBefore = Get-ForegroundWindowHandle
 
         switch ($operation.tool) {
             "click" {
@@ -1218,9 +1256,9 @@ try {
             }
             "press_key" {
                 if (Test-SessionForegroundInputMode) {
-                    Send-ForegroundKey $hwnd $operation.key
+                    Send-ForegroundKey $hwnd $operation.key ([int]$operation.duration_ms)
                 } else {
-                    Send-Key $hwnd $operation.key
+                    Send-Key $hwnd $operation.key ([int]$operation.duration_ms)
                 }
             }
             "set_value" {
@@ -1237,7 +1275,12 @@ try {
         }
 
         Start-Sleep -Milliseconds 120
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        $foregroundAfter = Get-ForegroundWindowHandle
+        $foregroundChanged = $foregroundBefore -ne [IntPtr]::Zero -and $foregroundAfter -ne $foregroundBefore
+        $snapshot = Build-Snapshot $operation.app
+        $snapshot | Add-Member -NotePropertyName inputMode -NotePropertyValue $inputMode -Force
+        $snapshot | Add-Member -NotePropertyName foregroundChanged -NotePropertyValue $foregroundChanged -Force
+        $response = [pscustomobject]@{ ok = $true; snapshot = $snapshot }
     }
 } catch {
     $message = $_.Exception.Message

@@ -87,6 +87,8 @@
 - [x] 将 Windows artifact 接入 npm release packaging，作为既有 npm root/alias packages 的 bundled artifacts 分发。
 - [x] 新增 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=background|session-foreground`，默认保持非抢占 background 行为；`session-foreground` 仅用于隔离 session / VM 内的游戏/raw-input 兼容路径。
 - [x] 将 Windows 后台截图 / 隔离 session 输入 / 跨平台 Codex plugin launcher 收口到 `0.1.37` 版本源，并部署到本机 Codex plugin cache。
+- [x] 根据 Neon Assault 试玩反馈给 `press_key` 增加 `duration_ms`，让游戏移动这类 hold-style 输入可以通过一次 tool call 表达，并收口到 `0.1.38`。
+- [x] 给 Windows background 路径补 `Screenshot source`、`Input mode` 和 `Foreground changed` 诊断，避免把 tool 调用成功误判为目标窗口实际响应或完全非抢占，并收口到 `0.1.39`。
 - [ ] 补 Windows signing / installer 方案。
 - [ ] 评估把 PowerShell bridge 替换为原生 Go COM/UIA 的收益和风险。
 
@@ -105,3 +107,5 @@
 - 2026-04-26：Windows screenshot 先走 `PrintWindow(PW_RENDERFULLCONTENT)`，用于目标窗口被遮挡但未最小化的后台观察；失败或明显空图再回退屏幕拷贝。
 - 2026-04-26：游戏/raw-input 兼容不承诺同一桌面后台输入。新增 `OPEN_COMPUTER_USE_WINDOWS_INPUT_MODE=session-foreground`，只在隔离桌面 session / VM 内允许前台化目标并使用 `SendInput`；默认仍是 `background` 非抢占模式。
 - 2026-04-26：本轮 Windows 后台兼容改动使用 `0.1.37` 作为新的版本源，避免本机 Codex plugin cache 继续复用 `0.1.36` 目录。
+- 2026-04-26：Neon Assault 实测显示 `press_key` 的短 tap 能触发跳跃，但不适合左右移动；`press_key.duration_ms` 改为显式 hold duration，默认仍保持短按。
+- 2026-04-26：background 模式新增截图来源和前台变化诊断。默认仍不主动调用 `SetForegroundWindow` / `SendInput`，但会把实际观测到的 foreground 变化写回结果文本。

@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-var version = "0.1.37"
+var version = "0.1.39"
 
 //go:embed runtime.ps1
 var windowsRuntimeScript string
@@ -82,10 +82,13 @@ type appSnapshot struct {
 	WindowTitle         string          `json:"windowTitle,omitempty"`
 	WindowBounds        *frame          `json:"windowBounds,omitempty"`
 	ScreenshotPNGBase64 string          `json:"screenshotPngBase64,omitempty"`
+	ScreenshotSource    string          `json:"screenshotSource,omitempty"`
 	TreeLines           []string        `json:"treeLines,omitempty"`
 	FocusedSummary      string          `json:"focusedSummary,omitempty"`
 	SelectedText        string          `json:"selectedText,omitempty"`
 	Elements            []elementRecord `json:"elements,omitempty"`
+	InputMode           string          `json:"inputMode,omitempty"`
+	ForegroundChanged   *bool           `json:"foregroundChanged,omitempty"`
 }
 
 func (s *appSnapshot) renderedText() string {
@@ -106,6 +109,15 @@ func (s *appSnapshot) renderedText() string {
 		fmt.Sprintf("Window: %q, App: %s.", title, s.App.Name),
 	}
 	lines = append(lines, s.TreeLines...)
+	if strings.TrimSpace(s.ScreenshotSource) != "" {
+		lines = append(lines, "", fmt.Sprintf("Screenshot source: %s.", s.ScreenshotSource))
+	}
+	if strings.TrimSpace(s.InputMode) != "" {
+		lines = append(lines, fmt.Sprintf("Input mode: %s.", s.InputMode))
+	}
+	if s.ForegroundChanged != nil {
+		lines = append(lines, fmt.Sprintf("Foreground changed: %t.", *s.ForegroundChanged))
+	}
 	if strings.TrimSpace(s.SelectedText) != "" {
 		lines = append(lines, "", fmt.Sprintf("Selected text: [%s]", s.SelectedText))
 	} else if strings.TrimSpace(s.FocusedSummary) != "" {
@@ -145,6 +157,7 @@ type psRequest struct {
 	Pages        float64        `json:"pages,omitempty"`
 	Text         string         `json:"text,omitempty"`
 	Key          string         `json:"key,omitempty"`
+	DurationMS   int            `json:"duration_ms,omitempty"`
 	Value        string         `json:"value,omitempty"`
 	WindowBounds *frame         `json:"windowBounds,omitempty"`
 }
@@ -203,7 +216,7 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 	case "type_text":
 		return s.typeText(requiredString(args, "app"), requiredString(args, "text"))
 	case "press_key":
-		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"))
+		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"), intValue(optionalFloat(args, "duration_ms"), 0))
 	case "set_value":
 		return s.setValue(requiredString(args, "app"), requiredString(args, "element_index"), requiredString(args, "value"))
 	default:
@@ -348,17 +361,23 @@ func (s *service) typeText(app, text string) toolCallResult {
 	return s.actionResult(app, psRequest{Tool: "type_text", App: app, Text: text})
 }
 
-func (s *service) pressKey(app, key string) toolCallResult {
+func (s *service) pressKey(app, key string, durationMS int) toolCallResult {
 	if app == "" {
 		return textResult("Missing required argument: app", true)
 	}
 	if key == "" {
 		return textResult("Missing required argument: key", true)
 	}
+	if durationMS < 0 {
+		return textResult("duration_ms must be >= 0", true)
+	}
+	if durationMS > 10000 {
+		return textResult("duration_ms must be <= 10000", true)
+	}
 	if s.currentSnapshot(app) == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
 	}
-	return s.actionResult(app, psRequest{Tool: "press_key", App: app, Key: key})
+	return s.actionResult(app, psRequest{Tool: "press_key", App: app, Key: key, DurationMS: durationMS})
 }
 
 func (s *service) setValue(app, elementIndex, value string) toolCallResult {
@@ -586,6 +605,9 @@ func toolDefinitions() []toolDefinition {
 			InputSchema: objectSchema(map[string]any{
 				"app": stringProperty("App name or bundle identifier"),
 				"key": stringProperty("Key or key-combination to press"),
+				"duration_ms": integerProperty(
+					"Optional hold duration in milliseconds. Defaults to a short tap; use 100-1000ms for game movement.",
+				),
 			}, []string{"app", "key"}),
 		},
 		{
